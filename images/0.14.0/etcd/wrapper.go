@@ -9,10 +9,12 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/rancher/go-rancher-metadata/metadata"
 	"github.com/urfave/cli"
 )
 
@@ -20,6 +22,11 @@ const (
 	dataDir       = "/data/etcd"
 	backupBaseDir = "/backup"
 	backupRetries = 4
+	metadataUrl   = "http://169.254.169.250/2016-07-29"
+)
+
+var (
+	mClient metadata.Client
 )
 
 func init() {
@@ -31,6 +38,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// initializing Rancher metadata client
+	mClient = metadata.NewClient(metadataUrl)
 
 	app := cli.NewApp()
 	app.Name = "Etcd Wrapper"
@@ -153,6 +163,9 @@ func RollingBackupAction(c *cli.Context) error {
 
 func CreateBackup(t time.Time) {
 	var err error
+	var selectedContIP string
+	var clusterHealthy bool
+	var raftIndex int
 	failureInterval := 15 * time.Second
 	backupName := fmt.Sprintf("%s_etcd", t.Format(time.RFC3339))
 	backupDir := fmt.Sprintf("%s/%s", backupBaseDir, backupName)
@@ -162,10 +175,52 @@ func CreateBackup(t time.Time) {
 			time.Sleep(failureInterval)
 		}
 
-		// FIXME! either get container ips (ideal) or service/stack name (dns)
-		// curl -H 'Accept: application/json' http://169.254.169.250/2016-07-29/self/stack/etcd/services/etcd/containers | jq -r .[].primary_ip
-		// only use .[].state == 'running'
-		cmd := exec.Command("etcdctl", "snapshot", "save", "--endpoints", "etcd:2379", backupDir)
+		etcdContainers, err := mClient.GetServiceContainers("etcd", "kubernetes")
+		if err != nil {
+			log.WithFields(log.Fields{
+				"attempt": retries + 1,
+				"error":   err,
+				"data":    "",
+			}).Warn("Backup failed - Can't connect to metadata")
+			continue
+		}
+
+		raftIndex = 0
+		selectedContIP = "0"
+		clusterHealthy = false
+		for _, etcdContainer := range etcdContainers {
+			// check if the cluster is healthy
+			cmd := exec.Command("etcdctl", "--endpoints", etcdContainer.PrimaryIp+":2379", "endpoint", "health")
+			data, _ := cmd.CombinedOutput()
+
+			if strings.Contains(string(data), "unhealthy") {
+				log.WithFields(log.Fields{
+					"error": err,
+					"data":  string(data),
+				}).Warn("Checking member health failed from etcd member: " + etcdContainer.PrimaryIp)
+				continue
+			} else {
+				// member is healthy, checking for raft index
+				cmd := exec.Command("etcdctl", "--endpoints", etcdContainer.PrimaryIp+":2379", "endpoint", "status")
+				data, _ := cmd.CombinedOutput()
+				endpointStatus := strings.Split(string(data), ", ")
+				endpointRI := strings.TrimSuffix(endpointStatus[len(endpointStatus)-1], "\n")
+				currentRI, _ := strconv.Atoi(endpointRI)
+				if currentRI >= raftIndex {
+					raftIndex = currentRI
+					selectedContIP = etcdContainer.PrimaryIp
+					clusterHealthy = true
+				}
+			}
+		}
+		if !clusterHealthy {
+			log.WithFields(log.Fields{
+				"attempt": retries + 1,
+			}).Warn("Backup failed - Cluster is unhealthy")
+			continue
+		}
+
+		cmd := exec.Command("etcdctl", "snapshot", "save", "--endpoints", selectedContIP+":2379", backupDir)
 
 		startTime := time.Now()
 		data, err := cmd.CombinedOutput()
@@ -180,8 +235,10 @@ func CreateBackup(t time.Time) {
 
 		} else {
 			log.WithFields(log.Fields{
-				"name":    backupName,
-				"runtime": endTime.Sub(startTime),
+				"name":      backupName,
+				"runtime":   endTime.Sub(startTime),
+				"member":    selectedContIP,
+				"raftIndex": raftIndex,
 			}).Info("Created backup")
 			break
 		}
