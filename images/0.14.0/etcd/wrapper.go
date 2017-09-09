@@ -26,7 +26,8 @@ const (
 )
 
 var (
-	mClient metadata.Client
+	mClient   metadata.Client
+	stackName string
 )
 
 func init() {
@@ -41,6 +42,11 @@ func main() {
 
 	// initializing Rancher metadata client
 	mClient = metadata.NewClient(metadataUrl)
+	selfStack, err := mClient.GetSelfStack()
+	if err != nil {
+		log.Fatal(err)
+	}
+	stackName = selfStack.Name
 
 	app := cli.NewApp()
 	app.Name = "Etcd Wrapper"
@@ -175,7 +181,7 @@ func CreateBackup(t time.Time) {
 			time.Sleep(failureInterval)
 		}
 
-		etcdContainers, err := mClient.GetServiceContainers("etcd", "kubernetes")
+		etcdContainers, err := mClient.GetServiceContainers("etcd", stackName)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"attempt": retries + 1,
