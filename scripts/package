@@ -13,6 +13,8 @@ TAG=${TAG:-${VERSION}${SUFFIX}}
 REPO=${REPO:-rancher}
 
 cp ../bin/etcdwrapper .
-docker build -t ${REPO}/etcd:${TAG} .
 
-echo Built ${REPO}/etcd:${TAG}
+IMAGE=${REPO}/etcd:${TAG}
+docker build -t ${IMAGE} .
+echo ${IMAGE} > ../dist/images
+echo Built ${IMAGE}
