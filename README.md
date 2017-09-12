@@ -1,4 +1,4 @@
-etcd-catalog
+rancher-etcd
 ========
 
 Etcd image used in Kubernetes catalog
