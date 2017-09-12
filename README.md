@@ -1,16 +1,12 @@
 etcd-catalog
 ========
 
-A microservice that does micro things.
+Etcd image used in Kubernetes catalog
 
 ## Building
 
 `make`
 
-
-## Running
-
-`./bin/etcd-catalog`
 
 ## License
 Copyright (c) 2014-2016 [Rancher Labs, Inc.](http://rancher.com)
