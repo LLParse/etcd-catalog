@@ -1,0 +1,6 @@
+./bin
+./.dapper
+./dist
+./images
+./compose-raw
+./templates
